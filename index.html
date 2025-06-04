@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Anagram Letter Workbench</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  * { box-sizing:border-box; }
+  body{font-family:system-ui,sans-serif;margin:0;background:#fafafa;}
+
+  /* ---------- layout ---------- */
+  #app      { display:flex; align-items:flex-start; gap:2rem; padding:1.5rem;}
+  #builder  { flex:1 1 0; min-width:260px; }
+  #sidebar  { width:240px; max-width:40%; }
+
+  /* ---------- widgets ---------- */
+  h1{margin:0 0 1rem 0;}
+  input[type=text]{font-size:1rem;padding:.45rem .6rem;width:60%;max-width:22rem;}
+  button{font-size:1rem;padding:.45rem .9rem;margin-left:.4rem;cursor:pointer;}
+
+  .row{min-height:3.2rem;margin:.6rem 0;display:flex;flex-wrap:wrap;align-items:center;}
+
+  .letter{
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:2.2rem;padding:.4rem .6rem;margin:.25rem;
+    border:2px solid #333;border-radius:.4rem;background:#fff;font-size:1.35rem;
+    user-select:none;cursor:pointer;transition:transform .12s ease;
+  }
+  .letter.disabled   {opacity:.25;cursor:default;}
+  .letter.space      {border-style:dashed;}
+  .letter.placeholder{border:2px dashed #bbb !important;background:transparent !important;cursor:default;}
+  .dragging{position:absolute;z-index:1000;pointer-events:none;transform:scale(1.15);opacity:.85;}
+
+  /* ---------- saved list ---------- */
+  #sidebar h2{margin-top:0;}
+  #savedList{list-style:none;padding:0;margin:.5rem 0;}
+  #savedList li{
+    background:#fff;border:1px solid #ddd;border-radius:.4rem;
+    margin:.4rem 0;padding:.4rem .6rem;display:flex;justify-content:space-between;align-items:center;
+    font-size:1.1rem;word-break:break-all;
+  }
+  .delBtn{
+    border:none;background:none;font-size:1.2rem;cursor:pointer;line-height:1;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- ─────────── left: anagram builder ──────────── -->
+  <div id="builder">
+    <h1>Anagram Letter Workbench</h1>
+
+    <div id="input-area">
+      <input id="phraseInput" type="text" placeholder="Enter word or phrase…">
+      <button id="loadBtn">Load phrase</button>
+    </div>
+
+    <strong>Available letters</strong>
+    <div id="upperRow"  class="row"></div>
+
+    <div style="margin:.7rem 0;">
+      <button id="addSpaceBtn">Add space</button>
+      <button id="saveBtn">Save combination</button>
+    </div>
+
+    <strong>Your anagram</strong>
+    <div id="lowerRow"  class="row"></div>
+  </div>
+
+  <!-- ─────────── right: saved combos ────────────── -->
+  <aside id="sidebar">
+    <h2>Saved combinations</h2>
+    <ul id="savedList"></ul>
+  </aside>
+</div>
+
+<script>
+(() => {
+  /* -------- element refs -------- */
+  const upper       = document.getElementById('upperRow');
+  const lower       = document.getElementById('lowerRow');
+  const phraseInput = document.getElementById('phraseInput');
+  const loadBtn     = document.getElementById('loadBtn');
+  const addSpaceBtn = document.getElementById('addSpaceBtn');
+  const saveBtn     = document.getElementById('saveBtn');
+  const savedList   = document.getElementById('savedList');
+
+  /* -------- helpers -------- */
+  const createLetter = ({ch,isSpace=false,refId=null}) => {
+    const span=document.createElement('span');
+    span.className='letter'+(isSpace?' space':'');
+    span.textContent=isSpace?'␣':ch;
+    span.draggable=true;
+    if(refId) span.dataset.ref=refId;
+    return span;
+  };
+  const clearRows = () => { upper.innerHTML=''; lower.innerHTML=''; };
+
+  /* -------- phrase loader -------- */
+  loadBtn.addEventListener('click',()=>{
+    const text=phraseInput.value.trim();
+    if(!text) return;
+    clearRows();
+    [...text].forEach((ch,i)=>{
+      if(ch===' ') return;                       // skip original spaces
+      const tile=createLetter({ch}); tile.id='u'+i;
+      tile.addEventListener('click',()=>{
+        if(tile.classList.contains('disabled')) return;
+        tile.classList.add('disabled');
+        const lowerTile=createLetter({ch,refId:tile.id});
+        addLowerEvents(lowerTile);
+        lower.appendChild(lowerTile);
+      });
+      upper.appendChild(tile);
+    });
+  });
+
+  /* -------- add manual space -------- */
+  addSpaceBtn.addEventListener('click',()=>{
+    const sp=createLetter({ch:'',isSpace:true});
+    addLowerEvents(sp);
+    lower.appendChild(sp);
+  });
+
+  /* -------- save current combo -------- */
+  saveBtn.addEventListener('click',()=>{
+    const combo=[...lower.querySelectorAll('.letter')].map(l=>
+      l.classList.contains('space') ? ' ' : l.textContent).join('');
+    if(!combo) return;
+    addSavedItem(combo);
+  });
+
+  function addSavedItem(text){
+    const li=document.createElement('li');
+    li.innerText=text.replace(/ /g,'\u00A0');     // keep spaces visible
+    const del=document.createElement('button');
+    del.className='delBtn'; del.textContent='✕';
+    del.addEventListener('click',()=>li.remove());
+    li.appendChild(del);
+    savedList.prepend(li);
+  }
+
+  /* -------- drag & drop on lower row -------- */
+  let placeholder=null, dragging=null, offsetX=0,offsetY=0;
+
+  function moveGhost(pageX,pageY){
+    if(!dragging) return;
+    dragging.style.left=pageX-offsetX+'px';
+    dragging.style.top =pageY-offsetY+'px';
+  }
+  document.addEventListener('dragover',e=>moveGhost(e.pageX,e.pageY));
+
+  function addLowerEvents(el){
+    /* click to undo / delete */
+    el.addEventListener('click',()=>{
+      if(el.classList.contains('space')){ el.remove(); return; }
+      const ref=document.getElementById(el.dataset.ref);
+      if(ref) ref.classList.remove('disabled');
+      el.remove();
+    });
+
+    /* drag start */
+    el.addEventListener('dragstart',e=>{
+      dragging=el;
+      const r=el.getBoundingClientRect();
+      offsetX=e.clientX-r.left; offsetY=e.clientY-r.top;
+
+      placeholder=document.createElement('span');
+      placeholder.className='letter placeholder';
+      placeholder.style.width=r.width+'px';
+      placeholder.style.height=r.height+'px';
+      lower.insertBefore(placeholder,el.nextSibling);
+
+      el.classList.add('dragging');
+      el.style.width=r.width+'px'; el.style.height=r.height+'px';
+      document.body.appendChild(el);
+      moveGhost(e.pageX,e.pageY);
+
+      e.dataTransfer.setData('text/plain','');
+    });
+
+    /* drag end */
+    el.addEventListener('dragend',()=>{
+      el.classList.remove('dragging'); el.style.cssText='';
+      lower.insertBefore(el,placeholder); placeholder.remove();
+      placeholder=null; dragging=null;
+    });
+  }
+
+  /* live preview when hovering row */
+  lower.addEventListener('dragover',e=>{
+    e.preventDefault();
+    if(!placeholder) return;
+    const after=[...lower.querySelectorAll('.letter:not(.placeholder)')]
+      .find(l=> e.clientX < l.getBoundingClientRect().left + l.offsetWidth/2);
+    if(after) lower.insertBefore(placeholder,after);
+    else      lower.appendChild(placeholder);
+  });
+})();
+</script>
+</body>
+</html>
